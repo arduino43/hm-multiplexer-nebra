@@ -1,40 +1,56 @@
 #!/usr/bin/env python3
 import os
-import json
+import subprocess
 
 
-TTN_CONF_FILE = '/var/nebra/ttn_conf.json'
+DEFAULT_CLIENTS = ["helium-miner:1680"]
+CLIENTS_ENV = "GWMP_MUX_CLIENTS"
+HOST_ENV = "GWMP_MUX_HOST"
 
 
-def read_ttn_config():
-    try:
-        with open(TTN_CONF_FILE) as file_:
-            ttn_config = json.loads(file_.read())
+def parse_clients():
+    env_clients = os.environ.get(CLIENTS_ENV)
+    if env_clients:
+        parsed = [client.strip() for client in env_clients.split(",") if client.strip()]
+        if parsed:
+            return parsed
+    return list(DEFAULT_CLIENTS)
 
-        return ttn_config
-    except FileNotFoundError:
-        # Config file doesn't exist yet, assume TTN not enabled.
-        return {
-            'ttn_enabled': False,
-            'ttn_cluster': 'eu'
-        }
+
+def unique_preserve_order(clients):
+    seen = set()
+    result = []
+    for client in clients:
+        if client not in seen:
+            result.append(client)
+            seen.add(client)
+    return result
+
+
+def build_command():
+    bin_path = "/usr/local/bin/gwmp-mux"
+    command = [bin_path]
+
+    host = os.environ.get(HOST_ENV)
+    if host:
+        command.extend(["--host", host])
+
+    clients = parse_clients()
+
+    fleet_name = os.environ.get("BALENA_APP_NAME", "")
+    if fleet_name.endswith("-c") and os.path.isfile("/var/thix/config.yaml"):
+        clients.append("thix-forwarder:1680")
+
+    for client in unique_preserve_order(clients):
+        command.extend(["--client", client])
+
+    return command
 
 
 def main():
-    bin = '/usr/local/bin/gwmp-mux'
-    cmd = '%s --client helium-miner:1680' % bin
-
-    ttn_config = read_ttn_config()
-    if ttn_config.get('ttn_enabled', False):
-        ttn_cluster = ttn_config.get('ttn_cluster')
-        cmd += ' --client %s:1700' % ttn_cluster
-
-    fleet_name = os.environ.get('BALENA_APP_NAME')
-    if fleet_name.endswith('-c') and os.path.isfile('/var/thix/config.yaml'):
-        cmd += ' --client thix-forwarder:1680'
-
-    os.system(cmd)
+    command = build_command()
+    subprocess.run(command, check=True)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
